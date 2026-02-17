@@ -5,12 +5,13 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://voiceapi.csv666.ru")
 API_KEY = os.getenv("API_KEY", "")
-API_TIMEOUT_SEC = 300  # Увеличили время ожидания до 5 минут для редактора
+API_TIMEOUT_SEC = 300
+CHANNEL_USERNAME = "@ai_akulaa"  # Канал для проверки подписки
 
 class CreateFlow(StatesGroup):
     main_menu = State(); input_prompt = State(); select_quantity = State(); select_aspect_ratio = State(); confirm = State()
@@ -37,36 +38,73 @@ async def api_call(endpoint, payload):
         resp.raise_for_status()
         return resp.json()
 
+async def check_subscription(bot: Bot, user_id: int) -> bool:
+    """Проверяет подписку пользователя на канал"""
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+def kb_subscribe():
+    """Клавиатура с кнопкой подписки"""
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 Подписаться на канал", url="https://t.me/ai_akulaa")], [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]])
+
 router = Router()
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, bot: Bot):
+    if not await check_subscription(bot, message.from_user.id):
+        await message.answer("🦈 <b>Akula Bot</b>\n\n⚠️ Для использования бота подпишись на наш канал:", parse_mode="HTML", reply_markup=kb_subscribe())
+        return
     await state.clear()
     kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
     await message.answer("🦈 <b>Akula Bot готов!</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=kb)
     await state.set_state(CreateFlow.main_menu)
 
-@router.message(F.text == "⬅️ Назад")
-async def back_btn(message: Message, state: FSMContext): await cmd_start(message, state)
+@router.callback_query(F.data == "check_sub")
+async def check_sub_callback(callback, bot: Bot, state: FSMContext):
+    if not await check_subscription(bot, callback.from_user.id):
+        await callback.answer("❌ Ты ещё не подписан!", show_alert=True)
+        return
+    await callback.message.delete()
+    kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+    await callback.message.answer("🦈 <b>Akula Bot готов!</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(CreateFlow.main_menu)
 
-# --- БЛОК СОЗДАНИЯ ---
+@router.message(F.text == "⬅️ Назад")
+async def back_btn(message: Message, state: FSMContext, bot: Bot): 
+    await cmd_start(message, state, bot)
+
+# --- СОЗДАНИЕ ---
 @router.message(CreateFlow.main_menu, F.text == "✨ Создать")
-async def start_create(message: Message, state: FSMContext):
+async def start_create(message: Message, state: FSMContext, bot: Bot):
+    if not await check_subscription(bot, message.from_user.id):
+        await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
+        return
     await message.answer("📝 Опиши картинку:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
     await state.set_state(CreateFlow.input_prompt)
 
 @router.message(CreateFlow.input_prompt)
 async def got_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text)
-    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="1"), KeyboardButton(text="2")], [BTN_BACK]], resize_keyboard=True)
-    await message.answer("🔢 Сколько вариантов?", reply_markup=kb)
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="1"), KeyboardButton(text="2")], [KeyboardButton(text="3"), KeyboardButton(text="4")], [BTN_BACK]], resize_keyboard=True)
+    await message.answer("🔢 Сколько вариантов сгенерировать?\n(1-4)", reply_markup=kb)
     await state.set_state(CreateFlow.select_quantity)
 
 @router.message(CreateFlow.select_quantity, F.text.isdigit())
 async def got_qty(message: Message, state: FSMContext):
-    await state.update_data(quantity=int(message.text))
-    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="16:9"), KeyboardButton(text="1:1")], [BTN_BACK]], resize_keyboard=True)
-    await message.answer("📐 Формат:", reply_markup=kb)
+    qty = int(message.text)
+    if qty not in [1, 2, 3, 4]:
+        await message.answer("Выбери от 1 до 4.")
+        return
+    await state.update_data(quantity=qty)
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="16:9"), KeyboardButton(text="9:16"), KeyboardButton(text="3:2")],
+        [KeyboardButton(text="2:3"), KeyboardButton(text="4:3"), KeyboardButton(text="3:4")],
+        [KeyboardButton(text="1:1"), BTN_BACK]
+    ], resize_keyboard=True)
+    await message.answer("📐 Выбери соотношение сторон:", reply_markup=kb)
     await state.set_state(CreateFlow.select_aspect_ratio)
 
 @router.message(CreateFlow.select_aspect_ratio, F.text.in_(ASPECT_RATIOS))
@@ -74,28 +112,53 @@ async def got_aspect(message: Message, state: FSMContext):
     await state.update_data(aspect_ratio=message.text)
     data = await state.get_data()
     kb = ReplyKeyboardMarkup(keyboard=[[BTN_CONFIRM, BTN_BACK]], resize_keyboard=True)
-    await message.answer(f"🔍 <b>Параметры:</b>\n{data['prompt']}\nФормат: {data['aspect_ratio']}\nКол-во: {data['quantity']}", parse_mode="HTML", reply_markup=kb)
+    await message.answer(
+        f"🔍 <b>Проверим параметры</b>\n\n"
+        f"📝 <b>Промпт:</b> {data['prompt']}\n"
+        f"📐 <b>Соотношение сторон:</b> {data['aspect_ratio']}\n"
+        f"🔢 <b>Вариантов:</b> {data['quantity']}\n\n"
+        f"Запускаем генерацию? ⚡",
+        parse_mode="HTML", reply_markup=kb
+    )
     await state.set_state(CreateFlow.confirm)
 
 @router.message(CreateFlow.confirm, F.text == "✅ Подтвердить")
-async def create_confirmed(message: Message, state: FSMContext):
+async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
+    if not await check_subscription(bot, message.from_user.id):
+        await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
+        await state.clear()
+        return
     data = await state.get_data()
-    await message.answer("⚡ Генерирую...", reply_markup=ReplyKeyboardRemove())
+    await message.answer("⚡ <b>Генерация</b>\n\nПрогресс: 0/" + str(data['quantity']), parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     try:
-        res = await api_call("/api/v1/image/create", {"prompt": data["prompt"], "aspect_ratio": data["aspect_ratio"], "n": data["quantity"]})
+        res = await api_call("/api/v1/image/create", {
+            "prompt": data["prompt"],
+            "aspect_ratio": data["aspect_ratio"],
+            "n": data["quantity"]
+        })
         imgs = res.get("image_b64", [])
         if isinstance(imgs, str): imgs = [imgs]
+        
         for idx, img in enumerate(imgs, 1):
+            await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{data['quantity']}", parse_mode="HTML")
             b = decode_b64_image(img)
-            if b: await message.answer_photo(BufferedInputFile(b, filename=f"c_{idx}.png"))
-        await message.answer("✅ Готово!", reply_markup=kb_main_kb())
-    except Exception as e: await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb_main_kb())
+            if b: 
+                await message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
+        
+        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+        await message.answer(f"❌ Ошибка генерации: {str(e)}", reply_markup=kb)
     await state.set_state(CreateFlow.main_menu)
 
-# --- БЛОК РЕДАКТИРОВАНИЯ ---
+# --- РЕДАКТИРОВАНИЕ ---
 @router.message(CreateFlow.main_menu, F.text == "🎨 Редактировать")
-async def start_edit(message: Message, state: FSMContext):
-    await message.answer("📷 Отправь фото для изменения:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
+async def start_edit(message: Message, state: FSMContext, bot: Bot):
+    if not await check_subscription(bot, message.from_user.id):
+        await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
+        return
+    await message.answer("📷 Отправь фото для редактирования:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
     await state.set_state(EditFlow.input_image)
 
 @router.message(EditFlow.input_image, F.photo)
@@ -105,28 +168,42 @@ async def edit_got_photo(message: Message, state: FSMContext, bot: Bot):
     await bot.download_file(file.file_path, bio)
     b64 = base64.b64encode(bio.getvalue()).decode("utf-8")
     await state.update_data(image_b64=b64)
-    await message.answer("📝 Что нужно изменить на фото?", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
+    await message.answer("📝 Опиши, как изменить изображение:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
     await state.set_state(EditFlow.input_prompt)
 
 @router.message(EditFlow.input_prompt)
 async def edit_got_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text)
-    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="1"), KeyboardButton(text="2")], [BTN_BACK]], resize_keyboard=True)
-    await message.answer("🔢 Сколько вариантов?", reply_markup=kb)
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="1"), KeyboardButton(text="2")], [KeyboardButton(text="3"), KeyboardButton(text="4")], [BTN_BACK]], resize_keyboard=True)
+    await message.answer("🔢 Сколько вариантов сгенерировать?\n(1-4)", reply_markup=kb)
     await state.set_state(EditFlow.select_quantity)
 
 @router.message(EditFlow.select_quantity, F.text.isdigit())
 async def edit_got_qty(message: Message, state: FSMContext):
-    await state.update_data(quantity=int(message.text))
+    qty = int(message.text)
+    if qty not in [1, 2, 3, 4]:
+        await message.answer("Выбери от 1 до 4.")
+        return
+    await state.update_data(quantity=qty)
     data = await state.get_data()
     kb = ReplyKeyboardMarkup(keyboard=[[BTN_CONFIRM, BTN_BACK]], resize_keyboard=True)
-    await message.answer(f"🔍 <b>Редактирование:</b>\n{data['prompt']}\nКол-во: {data['quantity']}", parse_mode="HTML", reply_markup=kb)
+    await message.answer(
+        f"🔍 <b>Проверим параметры</b>\n\n"
+        f"📝 <b>Промпт:</b> {data['prompt']}\n"
+        f"🔢 <b>Вариантов:</b> {data['quantity']}\n\n"
+        f"Запускаем генерацию? ⚡",
+        parse_mode="HTML", reply_markup=kb
+    )
     await state.set_state(EditFlow.confirm)
 
 @router.message(EditFlow.confirm, F.text == "✅ Подтвердить")
-async def edit_confirmed(message: Message, state: FSMContext):
+async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
+    if not await check_subscription(bot, message.from_user.id):
+        await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
+        await state.clear()
+        return
     data = await state.get_data()
-    await message.answer("⚡ Обрабатываю фото (это может занять до 1 минуты)...", reply_markup=ReplyKeyboardRemove())
+    await message.answer("⚡ <b>Генерация</b>\n\n⏳ Обрабатываю изображение (это может занять до 1 минуты)...", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     try:
         res = await api_call("/api/v1/image/edit", {
             "image": data["image_b64"],
@@ -136,18 +213,24 @@ async def edit_confirmed(message: Message, state: FSMContext):
         })
         imgs = res.get("image_b64", [])
         if isinstance(imgs, str): imgs = [imgs]
+        
         for idx, img in enumerate(imgs, 1):
+            await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{data['quantity']}", parse_mode="HTML")
             b = decode_b64_image(img)
-            if b: await message.answer_photo(BufferedInputFile(b, filename=f"e_{idx}.png"))
-        await message.answer("✅ Готово!", reply_markup=kb_main_kb())
-    except Exception as e: await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb_main_kb())
+            if b:
+                await message.answer_photo(BufferedInputFile(b, filename=f"edit_{idx}.png"))
+        
+        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+        await message.answer(f"❌ Ошибка редактирования: {str(e)}", reply_markup=kb)
     await state.set_state(CreateFlow.main_menu)
-
-def kb_main_kb(): return ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage()); dp.include_router(router)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 if __name__ == "__main__": asyncio.run(main())
