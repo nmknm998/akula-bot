@@ -118,6 +118,10 @@ async def create_start(message: Message, state: FSMContext):
     ))
     await state.set_state(CreateFlow.prompt)
 
+@router.message(CreateFlow.prompt, F.text == "⬅️ Назад")
+async def create_prompt_back(message: Message, state: FSMContext):
+    await go_back(message, state)
+
 @router.message(CreateFlow.prompt)
 async def create_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text)
@@ -130,9 +134,21 @@ async def create_prompt(message: Message, state: FSMContext):
     )
     await state.set_state(CreateFlow.quantity)
 
+@router.message(CreateFlow.quantity, F.text == "⬅️ Назад")
+async def create_qty_back(message: Message, state: FSMContext):
+    await message.answer("📝 Опиши изображение:", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[BTN_BACK]], resize_keyboard=True
+    ))
+    await state.set_state(CreateFlow.prompt)
+
 @router.message(CreateFlow.quantity, F.text.isdigit())
 async def create_qty(message: Message, state: FSMContext):
-    await state.update_data(quantity=int(message.text))
+    qty = int(message.text)
+    if qty < 1 or qty > 4:
+        await message.answer("⚠️ Выбери число от 1 до 4")
+        return
+    
+    await state.update_data(quantity=qty)
     await message.answer(
         "📐 Соотношение сторон:",
         reply_markup=ReplyKeyboardMarkup(
@@ -142,8 +158,33 @@ async def create_qty(message: Message, state: FSMContext):
     )
     await state.set_state(CreateFlow.aspect)
 
+@router.message(CreateFlow.quantity)
+async def create_qty_invalid(message: Message, state: FSMContext):
+    await message.answer("⚠️ Выбери число от 1 до 4")
+
+@router.message(CreateFlow.aspect, F.text == "⬅️ Назад")
+async def create_aspect_back(message: Message, state: FSMContext):
+    await message.answer(
+        "🔢 Сколько вариантов?",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=str(i)) for i in range(1, 5)], [BTN_BACK]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(CreateFlow.quantity)
+
 @router.message(CreateFlow.aspect)
 async def create_confirm(message: Message, state: FSMContext):
+    if message.text not in ASPECTS:
+        await message.answer(
+            "⚠️ Выбери формат из списка:\n1:1, 16:9 или 9:16",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text=a) for a in ASPECTS], [BTN_BACK]],
+                resize_keyboard=True
+            )
+        )
+        return
+    
     await state.update_data(aspect=message.text)
     data = await state.get_data()
     await message.answer(
@@ -152,26 +193,41 @@ async def create_confirm(message: Message, state: FSMContext):
     )
     await state.set_state(CreateFlow.confirm)
 
+@router.message(CreateFlow.confirm, F.text == "⬅️ Назад")
+async def create_confirm_back(message: Message, state: FSMContext):
+    await message.answer(
+        "📐 Соотношение сторон:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=a) for a in ASPECTS], [BTN_BACK]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(CreateFlow.aspect)
+
 @router.message(CreateFlow.confirm, F.text == "✅ Подтвердить")
 async def create_generate(message: Message, state: FSMContext):
     data = await state.get_data()
     await message.answer("⚡ Генерирую...", reply_markup=ReplyKeyboardRemove())
 
-    for i in range(data["quantity"]):
-        res = await api_call("/api/v1/image/create", {
-            "prompt": data["prompt"],
-            "aspect_ratio": data["aspect"],
-            "n": 1
-        })
-        b = decode_b64(res["image_b64"][0])
-        await message.answer_photo(
-            BufferedInputFile(b, f"img_{i+1}.png"),
-            caption=f"🖼 Вариант {i+1}"
-        )
-        await asyncio.sleep(0.5)
+    try:
+        for i in range(data["quantity"]):
+            res = await api_call("/api/v1/image/create", {
+                "prompt": data["prompt"],
+                "aspect_ratio": data["aspect"],
+                "n": 1
+            })
+            b = decode_b64(res["image_b64"][0])
+            await message.answer_photo(
+                BufferedInputFile(b, f"img_{i+1}.png"),
+                caption=f"🖼 Вариант {i+1}"
+            )
+            await asyncio.sleep(0.5)
 
-    await state.clear()
-    await message.answer("✅ Готово", reply_markup=MAIN_KB)
+        await state.clear()
+        await message.answer("✅ Готово", reply_markup=MAIN_KB)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=MAIN_KB)
+        await state.clear()
 
 # ---------- РЕДАКТИРОВАНИЕ ----------
 @router.message(F.text == "🎨 Редактировать")
@@ -182,14 +238,31 @@ async def edit_start(message: Message, state: FSMContext):
     ))
     await state.set_state(EditFlow.image)
 
+@router.message(EditFlow.image, F.text == "⬅️ Назад")
+async def edit_image_back(message: Message, state: FSMContext):
+    await go_back(message, state)
+
 @router.message(EditFlow.image, F.photo)
 async def edit_photo(message: Message, state: FSMContext, bot: Bot):
     file = await bot.get_file(message.photo[-1].file_id)
     bio = BytesIO()
     await bot.download_file(file.file_path, bio)
     await state.update_data(image=compress_image(bio.getvalue()))
-    await message.answer("📝 Что изменить?")
+    await message.answer("📝 Что изменить?", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[BTN_BACK]], resize_keyboard=True
+    ))
     await state.set_state(EditFlow.prompt)
+
+@router.message(EditFlow.image)
+async def edit_image_invalid(message: Message, state: FSMContext):
+    await message.answer("⚠️ Отправь фото")
+
+@router.message(EditFlow.prompt, F.text == "⬅️ Назад")
+async def edit_prompt_back(message: Message, state: FSMContext):
+    await message.answer("📷 Отправь фото", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[BTN_BACK]], resize_keyboard=True
+    ))
+    await state.set_state(EditFlow.image)
 
 @router.message(EditFlow.prompt)
 async def edit_prompt(message: Message, state: FSMContext):
@@ -203,35 +276,70 @@ async def edit_prompt(message: Message, state: FSMContext):
     )
     await state.set_state(EditFlow.quantity)
 
+@router.message(EditFlow.quantity, F.text == "⬅️ Назад")
+async def edit_qty_back(message: Message, state: FSMContext):
+    await message.answer("📝 Что изменить?", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[BTN_BACK]], resize_keyboard=True
+    ))
+    await state.set_state(EditFlow.prompt)
+
 @router.message(EditFlow.quantity, F.text.isdigit())
 async def edit_confirm(message: Message, state: FSMContext):
-    await state.update_data(quantity=int(message.text))
-    await message.answer("Запускаю?", reply_markup=ReplyKeyboardMarkup(
-        keyboard=[[BTN_CONFIRM, BTN_BACK]], resize_keyboard=True
-    ))
+    qty = int(message.text)
+    if qty < 1 or qty > 4:
+        await message.answer("⚠️ Выбери число от 1 до 4")
+        return
+    
+    await state.update_data(quantity=qty)
+    data = await state.get_data()
+    await message.answer(
+        f"📝 {data['prompt']}\n🔢 {data['quantity']}",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[BTN_CONFIRM, BTN_BACK]], resize_keyboard=True
+        )
+    )
     await state.set_state(EditFlow.confirm)
+
+@router.message(EditFlow.quantity)
+async def edit_qty_invalid(message: Message, state: FSMContext):
+    await message.answer("⚠️ Выбери число от 1 до 4")
+
+@router.message(EditFlow.confirm, F.text == "⬅️ Назад")
+async def edit_confirm_back(message: Message, state: FSMContext):
+    await message.answer(
+        "🔢 Сколько вариантов?",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=str(i)) for i in range(1, 5)], [BTN_BACK]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(EditFlow.quantity)
 
 @router.message(EditFlow.confirm, F.text == "✅ Подтвердить")
 async def edit_generate(message: Message, state: FSMContext):
     data = await state.get_data()
     await message.answer("⚡ Редактирую...", reply_markup=ReplyKeyboardRemove())
 
-    for i in range(data["quantity"]):
-        res = await api_call("/api/v1/image/edit", {
-            "reference_image_b64": data["image"],
-            "prompt": data["prompt"],
-            "aspect_ratio": "1:1",
-            "n": 1
-        })
-        b = decode_b64(res["image_b64"][0])
-        await message.answer_photo(
-            BufferedInputFile(b, f"edit_{i+1}.png"),
-            caption=f"🎨 Вариант {i+1}"
-        )
-        await asyncio.sleep(0.5)
+    try:
+        for i in range(data["quantity"]):
+            res = await api_call("/api/v1/image/edit", {
+                "reference_image_b64": data["image"],
+                "prompt": data["prompt"],
+                "aspect_ratio": "1:1",
+                "n": 1
+            })
+            b = decode_b64(res["image_b64"][0])
+            await message.answer_photo(
+                BufferedInputFile(b, f"edit_{i+1}.png"),
+                caption=f"🎨 Вариант {i+1}"
+            )
+            await asyncio.sleep(0.5)
 
-    await state.clear()
-    await message.answer("✅ Готово", reply_markup=MAIN_KB)
+        await state.clear()
+        await message.answer("✅ Готово", reply_markup=MAIN_KB)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=MAIN_KB)
+        await state.clear()
 
 # ================== RUN ==================
 async def main():
