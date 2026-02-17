@@ -8,9 +8,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8482353260:AAExJIgniNYVuGp9Tx0pbSAQRmBIblsg3aU")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://voiceapi.csv666.ru")
-API_KEY = os.getenv("API_KEY", "")
+API_KEY = os.getenv("API_KEY", "421191035:56566a724c66694c5353612f4e3643506a56414853673d3d")
 API_TIMEOUT_SEC = 300
 CHANNEL_USERNAME = "@ai_akulaa"
 
@@ -157,7 +157,6 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ API не вернуло изображений")
         else:
             for idx, img in enumerate(imgs, 1):
-                await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
                 b = decode_b64_image(img)
                 if b: 
                     await message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
@@ -225,8 +224,9 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
     await message.answer("⚡ <b>Обрабатываю фото...</b>\n\n⏳ Это может занять до 1 минуты", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
+        # ИСПРАВЛЕНО: используем "reference_image_b64" вместо "image"
         res = await api_call("/api/v1/image/edit", {
-            "image": data["image_b64"],
+            "reference_image_b64": data["image_b64"],
             "prompt": data["prompt"],
             "aspect_ratio": "1:1",
             "n": data["quantity"]
@@ -239,7 +239,6 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ API не вернуло изображений")
         else:
             for idx, img in enumerate(imgs, 1):
-                await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
                 b = decode_b64_image(img)
                 if b:
                     await message.answer_photo(BufferedInputFile(b, filename=f"edit_{idx}.png"))
