@@ -14,8 +14,11 @@ API_KEY = os.getenv("API_KEY", "421191035:56566a724c66694c5353612f4e3643506a5641
 API_TIMEOUT_SEC = 300
 CHANNEL_USERNAME = "@ai_akulaa"
 
+# ✅ ИСПРАВЛЕНИЕ 1: Единое состояние для главного меню
+class MainMenu(StatesGroup):
+    idle = State()
+
 class CreateFlow(StatesGroup):
-    main_menu = State()
     input_prompt = State()
     select_quantity = State()
     select_aspect_ratio = State()
@@ -84,6 +87,12 @@ def kb_subscribe():
         [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]
     ])
 
+# ✅ ИСПРАВЛЕНИЕ 2: Функция возврата в главное меню
+async def show_main_menu(message: Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
+    await message.answer("🦈 <b>Akula Bot готов!</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(MainMenu.idle)
+
 router = Router()
 
 @router.message(Command("start"))
@@ -97,9 +106,7 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         return
     
     await state.clear()
-    kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-    await message.answer("🦈 <b>Akula Bot готов!</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=kb)
-    await state.set_state(CreateFlow.main_menu)
+    await show_main_menu(message, state)
 
 @router.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback, bot: Bot, state: FSMContext):
@@ -108,16 +115,15 @@ async def check_sub_callback(callback, bot: Bot, state: FSMContext):
         return
     
     await callback.message.delete()
-    kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-    await callback.message.answer("🦈 <b>Akula Bot готов!</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=kb)
-    await state.set_state(CreateFlow.main_menu)
+    await show_main_menu(callback.message, state)
 
+# ✅ ИСПРАВЛЕНИЕ 3: Обработка кнопки "Назад" из любого состояния
 @router.message(F.text == "⬅️ Назад")
 async def back_btn(message: Message, state: FSMContext, bot: Bot):
-    await cmd_start(message, state, bot)
+    await show_main_menu(message, state)
 
 # ============ СОЗДАНИЕ ============
-@router.message(CreateFlow.main_menu, F.text == "✨ Создать")
+@router.message(MainMenu.idle, F.text == "✨ Создать")
 async def start_create(message: Message, state: FSMContext, bot: Bot):
     if not await check_subscription(bot, message.from_user.id):
         await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
@@ -137,11 +143,16 @@ async def got_prompt(message: Message, state: FSMContext):
     await message.answer("🔢 Сколько вариантов сгенерировать?\n(1-4)", reply_markup=kb)
     await state.set_state(CreateFlow.select_quantity)
 
-@router.message(CreateFlow.select_quantity, F.text.isdigit())
+# ✅ ИСПРАВЛЕНИЕ 4: Обработка некорректного ввода количества
+@router.message(CreateFlow.select_quantity)
 async def got_qty(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("❌ Пожалуйста, выбери число от 1 до 4")
+        return
+    
     qty = int(message.text)
     if qty not in [1, 2, 3, 4]:
-        await message.answer("Выбери от 1 до 4.")
+        await message.answer("❌ Выбери от 1 до 4")
         return
     
     await state.update_data(quantity=qty)
@@ -153,8 +164,13 @@ async def got_qty(message: Message, state: FSMContext):
     await message.answer("📐 Выбери соотношение сторон:", reply_markup=kb)
     await state.set_state(CreateFlow.select_aspect_ratio)
 
-@router.message(CreateFlow.select_aspect_ratio, F.text.in_(ASPECT_RATIOS))
+# ✅ ИСПРАВЛЕНИЕ 5: Обработка некорректного ввода aspect ratio
+@router.message(CreateFlow.select_aspect_ratio)
 async def got_aspect(message: Message, state: FSMContext):
+    if message.text not in ASPECT_RATIOS:
+        await message.answer("❌ Пожалуйста, выбери соотношение сторон из предложенных вариантов")
+        return
+    
     await state.update_data(aspect_ratio=message.text)
     data = await state.get_data()
     kb = ReplyKeyboardMarkup(keyboard=[[BTN_CONFIRM, BTN_BACK]], resize_keyboard=True)
@@ -198,16 +214,14 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
                 if b:
                     await message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
         
-        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
+        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML")
+        await show_main_menu(message, state)
     except Exception as e:
-        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb)
-    
-    await state.set_state(CreateFlow.main_menu)
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        await show_main_menu(message, state)
 
 # ============ РЕДАКТИРОВАНИЕ ============
-@router.message(CreateFlow.main_menu, F.text == "🎨 Редактировать")
+@router.message(MainMenu.idle, F.text == "🎨 Редактировать")
 async def start_edit(message: Message, state: FSMContext, bot: Bot):
     if not await check_subscription(bot, message.from_user.id):
         await message.answer("⚠️ Подпишись на канал, чтобы продолжить:", reply_markup=kb_subscribe())
@@ -227,6 +241,11 @@ async def edit_got_photo(message: Message, state: FSMContext, bot: Bot):
     await message.answer("📝 Опиши, как изменить изображение:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
     await state.set_state(EditFlow.input_prompt)
 
+# ✅ ИСПРАВЛЕНИЕ 6: Обработка случая, когда пользователь не отправил фото
+@router.message(EditFlow.input_image)
+async def edit_no_photo(message: Message, state: FSMContext):
+    await message.answer("❌ Пожалуйста, отправь фото (не файл, не ссылку)")
+
 @router.message(EditFlow.input_prompt)
 async def edit_got_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text)
@@ -238,11 +257,15 @@ async def edit_got_prompt(message: Message, state: FSMContext):
     await message.answer("🔢 Сколько вариантов сгенерировать?\n(1-4)", reply_markup=kb)
     await state.set_state(EditFlow.select_quantity)
 
-@router.message(EditFlow.select_quantity, F.text.isdigit())
+@router.message(EditFlow.select_quantity)
 async def edit_got_qty(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("❌ Пожалуйста, выбери число от 1 до 4")
+        return
+    
     qty = int(message.text)
     if qty not in [1, 2, 3, 4]:
-        await message.answer("Выбери от 1 до 4.")
+        await message.answer("❌ Выбери от 1 до 4")
         return
     
     await state.update_data(quantity=qty)
@@ -288,17 +311,15 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
                 if b:
                     await message.answer_photo(BufferedInputFile(b, filename=f"edit_{idx}.png"))
         
-        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
+        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML")
+        await show_main_menu(message, state)
     except httpx.HTTPStatusError as e:
         error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
-        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-        await message.answer(f"❌ Ошибка API ({e.response.status_code}):\n\n{error_detail[:500]}", reply_markup=kb)
+        await message.answer(f"❌ Ошибка API ({e.response.status_code}):\n\n{error_detail[:500]}")
+        await show_main_menu(message, state)
     except Exception as e:
-        kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
-        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb)
-    
-    await state.set_state(CreateFlow.main_menu)
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        await show_main_menu(message, state)
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
