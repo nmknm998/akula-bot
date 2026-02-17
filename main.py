@@ -33,30 +33,19 @@ def decode_b64_image(b64_str):
     try: return base64.b64decode(clean_str)
     except: return None
 
-def compress_image(image_bytes: bytes, max_size_kb: int = 500) -> str:
-    """Сжимает изображение и возвращает base64 с префиксом"""
+def compress_image(image_bytes: bytes) -> str:
     img = Image.open(BytesIO(image_bytes))
-    
-    # Конвертируем в RGB если нужно
     if img.mode in ('RGBA', 'LA', 'P'):
         background = Image.new('RGB', img.size, (255, 255, 255))
-        if img.mode == 'P':
-            img = img.convert('RGBA')
+        if img.mode == 'P': img = img.convert('RGBA')
         background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
         img = background
-    
-    # Уменьшаем размер если слишком большой
     max_dimension = 1024
     if max(img.size) > max_dimension:
         img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
-    
-    # Сохраняем в JPEG с качеством 85
     output = BytesIO()
     img.save(output, format='JPEG', quality=85, optimize=True)
-    compressed_bytes = output.getvalue()
-    
-    # Возвращаем base64 БЕЗ префикса (как требует API)
-    return base64.b64encode(compressed_bytes).decode('utf-8')
+    return base64.b64encode(output.getvalue()).decode('utf-8')
 
 async def api_call(endpoint, payload):
     async with httpx.AsyncClient(timeout=API_TIMEOUT_SEC) as client:
@@ -68,8 +57,7 @@ async def check_subscription(bot: Bot, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
+    except: return False
 
 def kb_subscribe():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 Подписаться на канал", url="https://t.me/ai_akulaa")], [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]])
@@ -153,7 +141,7 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     data = await state.get_data()
-    progress_msg = await message.answer("⚡ <b>Генерирую...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await message.answer("⚡ <b>Генерирую...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
         res = await api_call("/api/v1/image/create", {
@@ -169,16 +157,14 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ API не вернуло изображений")
         else:
             for idx, img in enumerate(imgs, 1):
-                await progress_msg.edit_text(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
+                await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
                 b = decode_b64_image(img)
                 if b: 
                     await message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
         
-        await progress_msg.delete()
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
     except Exception as e:
-        await progress_msg.delete()
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb)
     
@@ -198,11 +184,8 @@ async def edit_got_photo(message: Message, state: FSMContext, bot: Bot):
     file = await bot.get_file(message.photo[-1].file_id)
     bio = BytesIO()
     await bot.download_file(file.file_path, bio)
-    
-    # Сжимаем изображение перед отправкой
     compressed_b64 = compress_image(bio.getvalue())
     await state.update_data(image_b64=compressed_b64)
-    
     await message.answer("📝 Опиши, как изменить изображение:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
     await state.set_state(EditFlow.input_prompt)
 
@@ -239,7 +222,7 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
         return
     
     data = await state.get_data()
-    progress_msg = await message.answer("⚡ <b>Обрабатываю фото...</b>\n\n⏳ Это может занять до 1 минуты", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await message.answer("⚡ <b>Обрабатываю фото...</b>\n\n⏳ Это может занять до 1 минуты", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
         res = await api_call("/api/v1/image/edit", {
@@ -256,21 +239,18 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ API не вернуло изображений")
         else:
             for idx, img in enumerate(imgs, 1):
-                await progress_msg.edit_text(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
+                await message.answer(f"⚡ <b>Генерация</b>\n\nПрогресс: {idx}/{len(imgs)}", parse_mode="HTML")
                 b = decode_b64_image(img)
                 if b:
                     await message.answer_photo(BufferedInputFile(b, filename=f"edit_{idx}.png"))
         
-        await progress_msg.delete()
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer("✅ <b>Готово!</b>", parse_mode="HTML", reply_markup=kb)
     except httpx.HTTPStatusError as e:
-        await progress_msg.delete()
         error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer(f"❌ Ошибка API ({e.response.status_code}):\n\n{error_detail[:500]}", reply_markup=kb)
     except Exception as e:
-        await progress_msg.delete()
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=kb)
     
