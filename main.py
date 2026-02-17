@@ -1,4 +1,3 @@
-Barsik, [18.02.2026 4:24]
 import asyncio, base64, re
 from io import BytesIO
 from PIL import Image
@@ -122,8 +121,6 @@ async def create_prompt(message: Message, state: FSMContext):
             keyboard=[[KeyboardButton(text=str(i)) for i in range(1,5)], [BTN_BACK]],
             resize_keyboard=True
         )
-
-Barsik, [18.02.2026 4:24]
 )
     await state.set_state(CreateFlow.quantity)
 
@@ -233,12 +230,11 @@ async def edit_generate(message: Message, state: FSMContext):
 # ================== RUN ==================
 async def main():
     bot = Bot(BOT_TOKEN)
-
-Barsik, [18.02.2026 4:24]
 dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     await dp.start_polling(bot)
 
 if name == "__main__":
     asyncio.run(main())
+
 
