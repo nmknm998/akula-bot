@@ -103,6 +103,12 @@ async def check_sub(cb, bot: Bot):
     else:
         await cb.answer("❌ Ты ещё не подписан", show_alert=True)
 
+# ---------- НАЗАД ----------
+@router.message(F.text == "⬅️ Назад")
+async def go_back(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🦈 Akula Bot готов!", reply_markup=MAIN_KB)
+
 # ---------- СОЗДАНИЕ ----------
 @router.message(F.text == "✨ Создать")
 async def create_start(message: Message, state: FSMContext):
@@ -118,10 +124,10 @@ async def create_prompt(message: Message, state: FSMContext):
     await message.answer(
         "🔢 Сколько вариантов?",
         reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text=str(i)) for i in range(1,5)], [BTN_BACK]],
+            keyboard=[[KeyboardButton(text=str(i)) for i in range(1, 5)], [BTN_BACK]],
             resize_keyboard=True
         )
-)
+    )
     await state.set_state(CreateFlow.quantity)
 
 @router.message(CreateFlow.quantity, F.text.isdigit())
@@ -191,7 +197,7 @@ async def edit_prompt(message: Message, state: FSMContext):
     await message.answer(
         "🔢 Сколько вариантов?",
         reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text=str(i)) for i in range(1,5)], [BTN_BACK]],
+            keyboard=[[KeyboardButton(text=str(i)) for i in range(1, 5)], [BTN_BACK]],
             resize_keyboard=True
         )
     )
@@ -230,11 +236,9 @@ async def edit_generate(message: Message, state: FSMContext):
 # ================== RUN ==================
 async def main():
     bot = Bot(BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     await dp.start_polling(bot)
 
-if name == "__main__":
+if __name__ == "__main__":
     asyncio.run(main())
-
-
