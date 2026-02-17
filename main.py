@@ -16,9 +16,9 @@ from aiogram.types import (
 )
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = "ТВОЙ_BOT_TOKEN"
+BOT_TOKEN = "8482353260:AAExJIgniNYVuGp9TxrpbSAQRmBIblsg3aU"
 API_BASE_URL = "https://voiceapi.csv666.ru"
-API_KEY = "ТВОЙ_API_KEY"
+API_KEY = "421191035:56566a724c66694c5353612f4e3643506a56414853673d3d"
 API_TIMEOUT_SEC = 300
 CHANNEL_USERNAME = "@ai_akulaa"
 
@@ -241,3 +241,4 @@ dp = Dispatcher(storage=MemoryStorage())
 
 if name == "__main__":
     asyncio.run(main())
+
