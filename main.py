@@ -8,9 +8,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8482353260:AAExJIgniNYVuGp9Tx0pbSAQRmBIblsg3aU")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://voiceapi.csv666.ru")
-API_KEY = os.getenv("API_KEY", "421191035:56566a724c66694c5353612f4e3643506a56414853673d3d")
+# ТВОИ ДАННЫЕ (УЖЕ ВПИСАНЫ)
+BOT_TOKEN = "8482353260:AAExJIgniNYVuGp9Tx0pbSAQRmBIblsg3aU"
+API_BASE_URL = "https://voiceapi.csv666.ru"
+API_KEY = "421191035:56566a724c66694c5353612f4e3643506a56414853673d3d"
 API_TIMEOUT_SEC = 300
 CHANNEL_USERNAME = "@ai_akulaa"
 
@@ -142,18 +143,20 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
         return
     data = await state.get_data()
     qty = data["quantity"]
-    await message.answer(f"⚡ <b>Генерирую {qty} вариант(а)...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    
+    # Отправляем сообщение о начале
+    await message.answer(f"⚡ <b>Начинаю генерацию {qty} вариант(а/ов)...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
-        # ЦИКЛ ДЛЯ ГЕНЕРАЦИИ НЕСКОЛЬКИХ ФОТО
+        # ВАЖНО: Цикл, который заставляет API работать несколько раз
         for i in range(qty):
-            if qty > 1:
-                await message.answer(f"⏳ Создаю вариант {i+1} из {qty}...")
+            # Информируем пользователя о прогрессе
+            status_msg = await message.answer(f"⏳ Создаю вариант {i+1} из {qty}...")
             
             res = await api_call("/api/v1/image/create", {
                 "prompt": data["prompt"],
                 "aspect_ratio": data["aspect_ratio"],
-                "n": 1 # Просим по 1 за раз, так как API не понимает больше
+                "n": 1 # Всегда просим 1, чтобы API не глючило
             })
             
             imgs = res.get("image_b64", [])
@@ -161,7 +164,11 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
             
             if imgs:
                 b = decode_b64_image(imgs[0])
-                if b: await message.answer_photo(BufferedInputFile(b, filename=f"create_{i+1}.png"))
+                if b:
+                    await message.answer_photo(BufferedInputFile(b, filename=f"create_{i+1}.png"))
+                    await status_msg.delete() # Удаляем текст "Создаю...", когда фото готово
+            else:
+                await message.answer(f"❌ Не удалось создать вариант {i+1}")
         
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer("✅ <b>Все варианты готовы!</b>", parse_mode="HTML", reply_markup=kb)
@@ -223,14 +230,12 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
         return
     data = await state.get_data()
     qty = data["quantity"]
-    await message.answer(f"⚡ <b>Обрабатываю {qty} вариант(а)...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await message.answer(f"⚡ <b>Обрабатываю {qty} вариант(а/ов)...</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
-        # ЦИКЛ ДЛЯ РЕДАКТИРОВАНИЯ НЕСКОЛЬКИХ ФОТО
         for i in range(qty):
-            if qty > 1:
-                await message.answer(f"⏳ Обрабатываю вариант {i+1} из {qty}...")
-                
+            status_msg = await message.answer(f"⏳ Обрабатываю вариант {i+1} из {qty}...")
+            
             res = await api_call("/api/v1/image/edit", {
                 "reference_image_b64": data["image_b64"],
                 "prompt": data["prompt"],
@@ -243,7 +248,11 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
             
             if imgs:
                 b = decode_b64_image(imgs[0])
-                if b: await message.answer_photo(BufferedInputFile(b, filename=f"edit_{i+1}.png"))
+                if b:
+                    await message.answer_photo(BufferedInputFile(b, filename=f"edit_{i+1}.png"))
+                    await status_msg.delete()
+            else:
+                await message.answer(f"❌ Не удалось изменить вариант {i+1}")
         
         kb = ReplyKeyboardMarkup(keyboard=[[BTN_CREATE, BTN_EDIT]], resize_keyboard=True)
         await message.answer("✅ <b>Все варианты готовы!</b>", parse_mode="HTML", reply_markup=kb)
