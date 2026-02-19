@@ -89,7 +89,6 @@ async def api_call(endpoint, payload):
         logger.info(f"api_call: вызов {endpoint}")
         logger.info(f"api_call: payload keys = {payload.keys()}")
         
-        # Проверяем размер base64 изображения если есть
         if 'reference_image_b64' in payload:
             img_size = len(payload['reference_image_b64'])
             logger.info(f"api_call: размер reference_image_b64 = {img_size} символов")
@@ -121,6 +120,24 @@ def kb_subscribe():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Подписаться на канал", url="https://t.me/ai_akulaa")],
         [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]
+    ])
+
+def kb_after_generation(prompt: str, aspect_ratio: str):
+    """Клавиатура после успешной генерации"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Перегенерировать", callback_data=f"regenerate:{aspect_ratio}")],
+        [InlineKeyboardButton(text="✨ Новая генерация", callback_data="new_generation")],
+        [InlineKeyboardButton(text="🎨 Редактировать результат", callback_data="edit_result")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="to_menu")]
+    ])
+
+def kb_after_edit():
+    """Клавиатура после редактирования"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Перегенерировать", callback_data="re_edit")],
+        [InlineKeyboardButton(text="✨ Новая генерация", callback_data="new_generation")],
+        [InlineKeyboardButton(text="🎨 Редактировать ещё раз", callback_data="edit_again")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="to_menu")]
     ])
 
 async def show_main_menu(message: Message, state: FSMContext):
@@ -159,6 +176,108 @@ async def check_sub_callback(callback, bot: Bot, state: FSMContext):
 async def back_btn(message: Message, state: FSMContext, bot: Bot):
     logger.info(f"back_btn: пользователь {message.from_user.id}")
     await show_main_menu(message, state)
+
+# ============ ОБРАБОТЧИКИ КНОПОК ПОСЛЕ ГЕНЕРАЦИИ ============
+@router.callback_query(F.data.startswith("regenerate:"))
+async def regenerate_callback(callback, state: FSMContext, bot: Bot):
+    """Перегенерировать с теми же параметрами"""
+    data = await state.get_data()
+    aspect_ratio = callback.data.split(":")[1]
+    
+    await callback.message.delete()
+    await callback.message.answer("⚡ <b>Перегенерирую...</b>", parse_mode="HTML")
+    
+    try:
+        res = await api_call("/api/v1/image/create", {
+            "prompt": data["prompt"],
+            "aspect_ratio": aspect_ratio,
+            "n": data.get("quantity", 1)
+        })
+        
+        imgs = res.get("image_b64", [])
+        if isinstance(imgs, str):
+            imgs = [imgs]
+        
+        if imgs:
+            for idx, img in enumerate(imgs, 1):
+                b = decode_b64_image(img)
+                if b:
+                    await callback.message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
+            
+            await callback.message.answer(
+                f"⭐ <b>Изображение успешно создано</b>\n\n"
+                f"• <b>Промпт:</b> {data['prompt']}\n"
+                f"• <b>Соотношение сторон:</b> {aspect_ratio}\n\n"
+                f"💡 <b>Что дальше?</b>\nВыберите действие кнопками ниже.",
+                parse_mode="HTML",
+                reply_markup=kb_after_generation(data['prompt'], aspect_ratio)
+            )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+@router.callback_query(F.data == "new_generation")
+async def new_generation_callback(callback, state: FSMContext, bot: Bot):
+    """Начать новую генерацию"""
+    await callback.message.delete()
+    await state.clear()
+    await state.set_state(MainMenu.idle)
+    await callback.message.answer("📝 Опиши картинку:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
+    await state.set_state(CreateFlow.input_prompt)
+
+@router.callback_query(F.data == "edit_result")
+async def edit_result_callback(callback, state: FSMContext, bot: Bot):
+    """Редактировать последнее изображение"""
+    await callback.message.delete()
+    await callback.message.answer("📷 Отправь фото для редактирования:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
+    await state.set_state(EditFlow.input_image)
+
+@router.callback_query(F.data == "edit_again")
+async def edit_again_callback(callback, state: FSMContext, bot: Bot):
+    """Редактировать ещё раз"""
+    await callback.message.delete()
+    await callback.message.answer("📷 Отправь фото для редактирования:", reply_markup=ReplyKeyboardMarkup(keyboard=[[BTN_BACK]], resize_keyboard=True))
+    await state.set_state(EditFlow.input_image)
+
+@router.callback_query(F.data == "re_edit")
+async def re_edit_callback(callback, state: FSMContext, bot: Bot):
+    """Перегенерировать редактирование"""
+    data = await state.get_data()
+    
+    if 'image_b64' not in data or 'prompt' not in data:
+        await callback.answer("❌ Данные потеряны. Начни заново.", show_alert=True)
+        return
+    
+    await callback.message.delete()
+    await callback.message.answer("⚡ <b>Обрабатываю фото...</b>", parse_mode="HTML")
+    
+    try:
+        payload = {
+            "reference_image_b64": data["image_b64"],
+            "edit_instruction": data["prompt"]
+        }
+        
+        res = await api_call("/api/v1/image/edit", payload)
+        img_b64 = res.get("image_b64")
+        
+        if img_b64:
+            b = decode_b64_image(img_b64)
+            if b:
+                await callback.message.answer_photo(BufferedInputFile(b, filename="edited.png"))
+                await callback.message.answer(
+                    f"⭐ <b>Изображение успешно отредактировано</b>\n\n"
+                    f"• <b>Инструкция:</b> {data['prompt']}\n\n"
+                    f"💡 <b>Что дальше?</b>\nВыберите действие кнопками ниже.",
+                    parse_mode="HTML",
+                    reply_markup=kb_after_edit()
+                )
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+@router.callback_query(F.data == "to_menu")
+async def to_menu_callback(callback, state: FSMContext):
+    """Вернуться в главное меню"""
+    await callback.message.delete()
+    await show_main_menu(callback.message, state)
 
 # ============ СОЗДАНИЕ ============
 @router.message(MainMenu.idle, F.text == "✨ Создать")
@@ -254,9 +373,16 @@ async def create_confirmed(message: Message, state: FSMContext, bot: Bot):
                 b = decode_b64_image(img)
                 if b:
                     await message.answer_photo(BufferedInputFile(b, filename=f"create_{idx}.png"))
-        
-        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML")
-        await show_main_menu(message, state)
+            
+            # ✅ Красивое сообщение с кнопками
+            await message.answer(
+                f"⭐ <b>Изображение успешно создано</b>\n\n"
+                f"• <b>Промпт:</b> {data['prompt']}\n"
+                f"• <b>Соотношение сторон:</b> {data['aspect_ratio']}\n\n"
+                f"💡 <b>Что дальше?</b>\nВыберите действие кнопками ниже.",
+                parse_mode="HTML",
+                reply_markup=kb_after_generation(data['prompt'], data['aspect_ratio'])
+            )
     except Exception as e:
         logger.error(f"create_confirmed: ошибка - {e}")
         await message.answer(f"❌ Ошибка: {str(e)}")
@@ -307,7 +433,6 @@ async def edit_got_prompt(message: Message, state: FSMContext):
     await state.update_data(prompt=message.text)
     data = await state.get_data()
     
-    # Проверяем наличие изображения
     if 'image_b64' not in data:
         logger.error("edit_got_prompt: image_b64 отсутствует в state!")
         await message.answer("❌ Ошибка: изображение потеряно. Начни заново.")
@@ -334,7 +459,6 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
     
     data = await state.get_data()
     
-    # Проверяем наличие всех данных
     if 'image_b64' not in data:
         logger.error("edit_confirmed: image_b64 отсутствует!")
         await message.answer("❌ Ошибка: изображение потеряно. Начни заново.")
@@ -344,7 +468,6 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
     await message.answer("⚡ <b>Обрабатываю фото...</b>\n\n⏳ Это может занять до 1 минуты", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     
     try:
-        # ✅ ИСПРАВЛЕНО: используем edit_instruction вместо prompt
         payload = {
             "reference_image_b64": data["image_b64"],
             "edit_instruction": data["prompt"]
@@ -353,8 +476,6 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
         logger.info(f"edit_confirmed: отправка запроса с edit_instruction='{data['prompt'][:50]}'")
         
         res = await api_call("/api/v1/image/edit", payload)
-        
-        # API возвращает одно изображение (не массив)
         img_b64 = res.get("image_b64")
         
         if not img_b64:
@@ -364,12 +485,18 @@ async def edit_confirmed(message: Message, state: FSMContext, bot: Bot):
             b = decode_b64_image(img_b64)
             if b:
                 await message.answer_photo(BufferedInputFile(b, filename="edited.png"))
+                
+                # ✅ Красивое сообщение с кнопками
+                await message.answer(
+                    f"⭐ <b>Изображение успешно отредактировано</b>\n\n"
+                    f"• <b>Инструкция:</b> {data['prompt']}\n\n"
+                    f"💡 <b>Что дальше?</b>\nВыберите действие кнопками ниже.",
+                    parse_mode="HTML",
+                    reply_markup=kb_after_edit()
+                )
             else:
                 logger.error(f"edit_confirmed: не удалось декодировать изображение")
                 await message.answer("❌ Ошибка декодирования изображения")
-        
-        await message.answer("✅ <b>Готово!</b>", parse_mode="HTML")
-        await show_main_menu(message, state)
     except httpx.HTTPStatusError as e:
         error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
         logger.error(f"edit_confirmed: HTTP ошибка {e.response.status_code}: {error_detail}")
