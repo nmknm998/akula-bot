@@ -11,9 +11,9 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8482353260:AAExJIgniNYVuGp9Tx0pbSAQRmBIblsg3aU")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOR TOKEN BOT")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://voiceapi.csv666.ru")
-API_KEY = os.getenv("API_KEY", "421191035:56566a724c66694c5353612f4e3643506a56414853673d3d")
+API_KEY = os.getenv("API_KEY", "YOUR KOD")
 API_TIMEOUT_SEC = 300
 CHANNEL_USERNAME = "@ai_akulaa"
 
@@ -441,3 +441,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
